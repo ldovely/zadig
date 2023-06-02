@@ -7,6 +7,7 @@
 IMAGE_REPOSITORY = images-docker.zhulong.com.cn/zadig
 VERSION ?= $(shell date +'%Y%m%d%H%M%S')
 VERSION := $(VERSION)
+ASLAN = aslan
 MICROSERVICE_TARGETS = aslan cron hub-agent hub-server init jenkins-plugin packager-plugin predator-plugin resource-server ua warpdrive
 BUILD_BASE_TARGETS = focal bionic
 DEBUG_TOOLS_TARGETS = zadig-debug zgctl-sidecar
@@ -14,6 +15,7 @@ DEBUG_TOOLS_TARGETS = zadig-debug zgctl-sidecar
 prereq:
 	@docker buildx create --node=multiarch --use --platform=linux/amd64,linux/arm64
 
+aslan: prereq $(ASLAN:=.image)
 microservice: prereq $(MICROSERVICE_TARGETS:=.image)
 microservice.push: prereq $(MICROSERVICE_TARGETS:=.push)
 buildbase: prereq $(BUILD_BASE_TARGETS:=.buildbase)

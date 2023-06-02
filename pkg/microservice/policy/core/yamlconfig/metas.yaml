@@ -484,10 +484,12 @@ metas:
         description: ''
         rules:
           - method: GET
+            endpoint: api/aslan/workflow/v4/workflow/codeLog/?*
+          - method: GET
             endpoint: /api/aslan/workflow/workflow/preset/?*
           - method: GET
             endpoint: api/aslan/workflow/workflow
-            filter: true
+            #filter: true
           - method: GET
             endpoint: api/aslan/workflow/workflow
           - method: GET
@@ -524,7 +526,6 @@ metas:
             endpoint: /api/aslan/workflow/servicetask/workflows/?*/?*/?*/?*
           - method: GET
             endpoint: api/aslan/workflow/v4
-            filter: true
           - method: GET
             endpoint: api/aslan/workflow/v4
           - method: GET
@@ -564,7 +565,7 @@ metas:
           - method: GET
             endpoint: /api/aslan/environment/environments
             resourceType: Environment
-            filter: true
+            #filter: true
           - method: GET
             endpoint: /api/aslan/testing/testdetail
           - method: POST
@@ -586,7 +587,7 @@ metas:
           - method: GET
             endpoint: /api/aslan/environment/environments
             resourceType: Environment
-            filter: true
+            #filter: true
           - method: GET
             endpoint: /api/aslan/testing/testdetail
           - method: PUT
@@ -645,7 +646,7 @@ metas:
           - method: GET
             endpoint: /api/aslan/environment/environments
             resourceType: Environment
-            filter: true
+            #filter: true
           - method: GET
             endpoint: /api/aslan/project/products/?*/services
           - method: GET
@@ -736,7 +737,7 @@ metas:
           - method: POST
             endpoint: /api/aslan/environment/environments
             resourceType: Cluster
-            filter: true
+            #filter: true
           - method: POST
             endpoint: /api/aslan/service/workloads
           - method: GET

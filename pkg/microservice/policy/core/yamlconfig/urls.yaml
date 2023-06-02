@@ -1,6 +1,15 @@
 description: "public urls: url not need to authentication ; system_admin urls: urls that only system admin has permission ; project_admin: urls that project admin has permission"
 exemption_urls:
   public:
+    - endpoint: api/aslan/workflow/v4/workflowtask/codeLog/**
+      methods:
+        - GET
+    - endpoint: /api/aslan/workflow/v4/workflowtask/authors
+      methods:
+        - GET
+    - endpoint: /api/aslan/workflow/v4/workflowtask/hashLog/**
+      methods:
+        - GET
     - endpoint: api/plutus/health
       methods:
         - GET

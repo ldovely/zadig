@@ -10,29 +10,9 @@ preset_roles:
   - name: contributor
     rules:
       - verbs:
-          - get_workflow
-          - run_workflow
+          - '*'
         resources:
-          - Workflow
-      - verbs:
-          - get_environment
-          - config_environment
-          - manage_environment
-          - delete_environment
-        resources:
-          - Environment
-      - verbs:
-          - get_service
-        resources:
-          - Service
-      - verbs:
-          - get_build
-        resources:
-          - Build
-      - verbs:
-          - get_test
-        resources:
-          - Test
+          - '*'
   - name: project-admin
     rules:
       - verbs:
@@ -42,75 +22,12 @@ preset_roles:
   - name: read-only
     rules:
       - verbs:
-          - get_scan
+          - '*'
         resources:
-          - Scan
-      - verbs:
-          - get_workflow
-        resources:
-          - Workflow
-      - verbs:
-          - get_environment
-          - get_production_environment
-        resources:
-          - Environment
-      - verbs:
-          - get_service
-        resources:
-          - Service
-      - verbs:
-          - get_build
-        resources:
-          - Build
-      - verbs:
-          - get_test
-        resources:
-          - Test
-      - verbs:
-          - get_delivery
-        resources:
-          - Delivery
+          - '*'
   - name: read-project-only
     rules:
       - verbs:
-          - get_workflow
+          - '*'
         resources:
-          - Workflow
-        match_attributes:
-          - key: placeholder
-            value: placeholder
-      - verbs:
-          - get_environment
-          - get_production_environment
-        resources:
-          - Environment
-        match_attributes:
-          - key: placeholder
-            value: placeholder
-      - verbs:
-          - get_production_environment
-        resources:
-          - Environment
-        match_attributes:
-          - key: placeholder
-            value: placeholder
-      - verbs:
-          - get_service
-        resources:
-          - Service
-      - verbs:
-          - get_build
-        resources:
-          - Build
-      - verbs:
-          - get_test
-        resources:
-          - Test
-      - verbs:
-          - get_delivery
-        resources:
-          - Delivery
-      - verbs:
-          - get_scan
-        resources:
-          - Scan
+          - '*'

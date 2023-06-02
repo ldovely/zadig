@@ -227,6 +227,19 @@ func (*Router) Inject(router *gin.RouterGroup) {
 		taskV4.POST("/approve", ApproveStage)
 		taskV4.GET("/workflow/:workflowName/taskId/:taskId/job/:jobName", GetWorkflowV4ArtifactFileContent)
 		taskV4.POST("/trigger", CreateWorkflowTaskV4ByBuildInTrigger)
+
+		//增加接口获取代码对比结果
+		taskV4.GET("/codeLog/:workflowName/:taskID", GetWorkflowV4CodeLogs)
+		//获取指定hash日志
+		taskV4.GET("/hashLog/:workflowName/:taskID/:hash", GetHashLogs)
+		//获取指定人员的变更内容
+		taskV4.GET("/diffFiles/:workflowName/:taskID/:author", GetDiffFiles)
+		//获取所有commit
+		taskV4.GET("/commits/:workflowName/:taskID", GetCommits)
+		//获取人员列表
+		taskV4.GET("/authors", GetAuthors)
+		//查询对应文件的日志
+		taskV4.GET("/fileLog/:workflowName/:taskID/:file", GetFileLogs)
 	}
 
 	// ---------------------------------------------------------------------------------------
