@@ -397,13 +397,6 @@ func GetAuthors(ctx *gin.Context) {
 
 func configAuth() []Author {
 	authors := make([]Author, 0)
-	authors = append(authors, Author{"宋文彬", "swb", "songwb@zhulong.com.cn"})
-	authors = append(authors, Author{"吴小乔", "wxq", "wuxq@zhulong.con.cn"})
-	authors = append(authors, Author{"倪枫", "nf", "nif@zhulong.com.cn"})
-	authors = append(authors, Author{"廖楚波", "lcb", "liaocb@zhulong.com.cn"})
-	authors = append(authors, Author{"赵志权", "zzq", "zhaozq@zhulong.com.cn8014"})
-	authors = append(authors, Author{"肖梦银", "xmy", "xiaomy@zhulong.com.cn"})
-	authors = append(authors, Author{"章瑶", "zy", "zhangyao@zhulong.com.cn"})
 	return authors
 }
 
