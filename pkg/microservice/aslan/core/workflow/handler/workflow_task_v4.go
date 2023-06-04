@@ -19,13 +19,25 @@ package handler
 import (
 	"bufio"
 	"bytes"
+	"encoding/base64"
 	"encoding/json"
 	"fmt"
 	"github.com/allegro/bigcache"
 	"github.com/docker/distribution/uuid"
 	"github.com/gin-gonic/gin"
-	"github.com/koderover/zadig/pkg/microservice/aslan/core/code/service"
+	"github.com/koderover/zadig/pkg/microservice/aslan/config"
+	gitlabservice "github.com/koderover/zadig/pkg/microservice/aslan/core/common/service/gitlab"
+	c "github.com/koderover/zadig/pkg/microservice/jobexecutor/core/service/cmd"
+	"github.com/koderover/zadig/pkg/microservice/jobexecutor/core/service/step"
+	"github.com/koderover/zadig/pkg/shared/client/systemconfig"
+	"github.com/koderover/zadig/pkg/tool/git/gitlab"
+	"github.com/koderover/zadig/pkg/types"
+	gogitlab "github.com/xanzy/go-gitlab"
 	"io"
+	"k8s.io/utils/strings/slices"
+	"net/http"
+	"net/url"
+	"os"
 	"os/exec"
 	"strconv"
 	"strings"
@@ -248,54 +260,41 @@ func GetWorkflowV4ArtifactFileContent(c *gin.Context) {
 	c.Data(200, "application/octet-stream", resp)
 }
 
-func GetWorkflowV4CodeLogs(ctx *gin.Context) {
-	log.Errorf("GetWorkflowV4CodeLogs start")
-	taskID := ctx.Param("taskID")
-	workflowName := ctx.Param("workflowName")
-	context := internalhandler.NewContext(ctx)
-	defer func() { internalhandler.JSONResponse(ctx, context) }()
+func getClient(taskID string, workflowName string, context *internalhandler.Context) (*gitlab.Client, *types.Repository) {
 
-	gitDir, _ := getDir(taskID, workflowName, context)
+	taskId, _ := strconv.ParseInt(taskID, 10, 64)
+	v4, _ := workflow.GetWorkflowTaskV4(workflowName, taskId, context.Logger)
 
-	gitFetch(gitDir)
-	files := gitLog(gitDir)
-	s := ""
-	for line := range files {
-		s2 := files[line]
-		if strings.Contains(s2, "<") {
-			s2 = strings.Replace(s2, "<", "&lt", -1)
-		}
-		if strings.Contains(s2, ">") {
-			s2 = strings.Replace(s2, "<", "&gt", -1)
-		}
-		if strings.Contains(s2, " ") {
-			s2 = strings.Replace(s2, " ", "&nbsp;", -1)
-		}
+	for _, stage := range v4.Stages {
+		log.Info(stage)
+		if strings.EqualFold(stage.Name, "代码审查") {
+			for _, job := range stage.Jobs {
+				log.Info(job)
+				if strings.EqualFold(job.Name, "codereview") {
+					log.Info("Spec", job.Spec)
+					freestyleJobSpec := job.Spec.(workflow.ZadigBuildJobSpec)
+					log.Info("freestyleJobSpec", freestyleJobSpec)
 
-		if strings.HasPrefix(s2, "+") {
-			s += fmt.Sprintln(`<tr><td bgcolor=#B0E0E6>` + s2 + `</td></tr>`)
-		} else if strings.HasPrefix(s2, "-") {
-			s += fmt.Sprintln(`<tr><td bgcolor=#FFC0CB>` + s2 + `</td></tr>`)
-		} else {
-			s += fmt.Sprintln(`<tr><td>` + s2 + `</td></tr>`)
-		}
+					for _, repos := range freestyleJobSpec.Repos {
+						if strings.Contains(repos.Address, "116.196.73.141") {
+							log.Info("repos", repos)
 
+							ch, err := systemconfig.New().GetCodeHost(repos.CodehostID)
+							log.Info(ch)
+							if nil != err {
+								log.Error(err)
+							}
+
+							client, _ := gitlabservice.NewClient(ch.ID, ch.Address, ch.AccessToken, config.ProxyHTTPSAddr(), ch.EnableProxy)
+							return client.Client, repos
+						}
+					}
+
+				}
+			}
+		}
 	}
-
-	ctx.Writer.Header().Set("Content-Type", "text/html; charset=utf-8")
-	content := `
-	<!DOCTYPE html>
-				<html>
-				<head>
-				<title>Code Review</title>
-				</head>
-				<body>
-				<table>
-					<tbody>` + s + `</tbody>
-				</table>
-				</body>
-				</html>`
-	ctx.String(200, strings.Join(files, content))
+	return nil, nil
 }
 
 func getDir(taskID string, workflowName string, context *internalhandler.Context) (string, string) {
@@ -320,19 +319,21 @@ func getDir(taskID string, workflowName string, context *internalhandler.Context
 					log.Info("Spec", job.Spec)
 					freestyleJobSpec := job.Spec.(workflow.ZadigBuildJobSpec)
 					log.Info("freestyleJobSpec", freestyleJobSpec)
+
 					for _, repos := range freestyleJobSpec.Repos {
 						if strings.Contains(repos.Address, "116.196.73.141") {
 							log.Info("repos", repos)
-							_, err := service.GetGitRepoInfo(repos.CodehostID, repos.RepoOwner, repos.RepoNamespace, repos.RepoName, repos.Branch, repos.RemoteName, "", context.Logger)
-							if err != nil {
-								log.Errorf(err.Error())
+
+							ch, err := systemconfig.New().GetCodeHost(repos.CodehostID)
+							log.Info(ch)
+							if nil != err {
+								log.Error(err)
 							}
-							gitDir = gitDir + repos.RepoName
-							if strings.EqualFold(repos.RepoName, "zsj-zhaobiao") {
-								gitDir = gitDir + "/zhaobiao-parent"
-							} else if strings.EqualFold(repos.RepoName, "zsj-xunjia") {
-								gitDir = gitDir + "/zsj-xunjia-root"
-							}
+
+							url := ch.Address + repos.RepoOwner + "/" + repos.RepoName + ".git"
+
+							log.Info(url)
+							gitDir := getClone(url, repos)
 							branch = repos.Branch
 							cache.Write("workDir_key"+workflowName+taskID, gitDir)
 							cache.Write("workBranch_key"+workflowName+taskID, branch)
@@ -347,29 +348,41 @@ func getDir(taskID string, workflowName string, context *internalhandler.Context
 	return gitDir, branch
 }
 
-func gitLog(dir string) []string {
-	command := exec.Command("git", "log", "-p", "--after=\"3 day ago\"")
-	command.Dir = dir
+func getClone(gitUrl string, repo *types.Repository) string {
 
-	pipe, err := command.StdoutPipe()
-	err = command.Start()
-	if err != nil {
-		log.Errorf("git log exec error,%s", err)
-	}
-	reader := bufio.NewReader(pipe)
-	var result []string
-	for {
-		line, _, err := reader.ReadLine()
-		if err != nil {
-			log.Errorf("git log read error,%s", err)
-			break
+	cache := GetCache()
+	memStore := ""
+	if len(cache.Read(gitUrl)) != 0 {
+		memStore = cache.Read(gitUrl)
+		return memStore
+	} else {
+		if len(memStore) == 0 {
+			dir := "/var/lib/workspace"
+			memStore = dir + "/" + uuid.Generate().String()
+
+			if _, err := os.Stat(memStore); os.IsNotExist(err) {
+				os.MkdirAll(memStore, 0777)
+			}
 		}
-		s := string(line)
-		log.Info(s)
-		result = append(result, s)
+		cache.Write(gitUrl, memStore)
 	}
 
-	return result
+	u, _ := url.Parse(repo.Address)
+	host := strings.TrimSuffix(strings.Join([]string{u.Host, u.Path}, "/"), "/")
+	decodeString, _ := base64.StdEncoding.DecodeString(repo.PrivateAccessToken)
+	log.Info(string(decodeString))
+
+	command := c.Command{
+		Cmd:          c.RemoteAdd(repo.RemoteName, step.OAuthCloneURL(repo.Source, string(decodeString), host, repo.RepoOwner, repo.RepoName, u.Scheme)),
+		DisableTrace: true,
+	}
+	command.Cmd.Dir = memStore
+	err := command.Cmd.Run()
+	if err != nil {
+		log.Error(err)
+	}
+
+	return memStore
 }
 
 type Author struct {
@@ -396,51 +409,36 @@ func configAuth() []Author {
 
 func GetFileLogs(ctx *gin.Context) {
 	file := ctx.Param("file")
-	taskID := ctx.Param("taskID")
+	cache := GetCache()
+	newPath := cache.Read(file)
+	log.Info(newPath)
+
 	workflowName := ctx.Param("workflowName")
+	taskID := ctx.Param("taskID")
 	context := internalhandler.NewContext(ctx)
 	defer func() { internalhandler.JSONResponse(ctx, context) }()
-	cache := GetCache()
-	file = cache.Read(file)
-	log.Info(file)
 
-	dir, branch := getDir(taskID, workflowName, context)
-	gitFetch(dir)
-	files := fileLog(dir, "remotes/origin/"+branch, file)
+	client, repo := getClient(taskID, workflowName, context)
 
-	writeCodeHtml(files, ctx)
-}
-
-func fileLog(dir string, branch string, file string) []FileLogInfo {
-	logs := make([]FileLogInfo, 0)
-	command := exec.Command("git", "blame", branch, file)
-	command.Dir = dir
-
-	pipe, err := command.StdoutPipe()
-	err = command.Start()
-	if err != nil {
-		log.Errorf(err.Error())
+	opt := &gogitlab.CompareOptions{
+		From: String("master"),
+		To:   String(repo.Branch),
 	}
+	id, _ := client.GetProjectID(repo.RepoOwner, repo.RepoName)
+	compare, _, _ := client.Repositories.Compare(id, opt)
 
-	reader := bufio.NewReader(pipe)
-
-	for {
-		line, _, err := reader.ReadLine()
-		if err != nil {
-			log.Errorf(err.Error())
-			break
+	files := make([]string, 0)
+	for _, commit := range compare.Diffs {
+		if strings.EqualFold(commit.NewPath, newPath) {
+			scanner := bufio.NewScanner(strings.NewReader(commit.Diff))
+			for scanner.Scan() {
+				line := scanner.Text()
+				files = append(files, line)
+			}
 		}
-		s := string(line)
-
-		hash := s[:10]
-		author := strings.Split(strings.SplitAfter(s, "(")[1], " ")[0]
-		code := strings.SplitAfter(s, ")")[1]
-		time := strings.SplitAfter(strings.SplitAfter(s, author)[1], " +0800")[0]
-		lin := strings.Split(strings.Split(s, "+0800")[1], ")")[0]
-		logs = append(logs, FileLogInfo{hash, author, time, lin, code})
 	}
 
-	return logs
+	writeHtml(files, ctx)
 }
 
 type FileLogInfo struct {
@@ -504,40 +502,67 @@ func GetHashLogs(ctx *gin.Context) {
 	context := internalhandler.NewContext(ctx)
 	defer func() { internalhandler.JSONResponse(ctx, context) }()
 
-	dir, _ := getDir(taskID, workflowName, context)
-	gitFetch(dir)
-	files := commitLog(dir, hash)
+	client, repo := getClient(taskID, workflowName, context)
+	id, _ := client.GetProjectID(repo.RepoOwner, repo.RepoName)
+	pid, _ := parseID(id)
+
+	commit, _ := GetCommit(client, pid, hash)
+	log.Info(commit)
+
+	files := make([]string, 0)
+	if nil != commit {
+		scanner := bufio.NewScanner(strings.NewReader(commit[0].Diff))
+		for scanner.Scan() {
+			line := scanner.Text()
+			files = append(files, line)
+		}
+	}
+
 	writeHtml(files, ctx)
 }
 
-func commitLog(dir string, hash string) []string {
+func parseID(id interface{}) (string, error) {
+	switch v := id.(type) {
+	case int:
+		return strconv.Itoa(v), nil
+	case string:
+		return v, nil
+	default:
+		return "", fmt.Errorf("invalid ID type %#v, the ID must be an int or a string", id)
+	}
+}
 
-	command := exec.Command("git", "show", hash)
-	command.Dir = dir
+func GetCommit(cli *gitlab.Client, projectId string, sha string, options ...gogitlab.RequestOptionFunc) ([]gogitlab.Diff, error) {
+	if sha == "" {
+		return nil, fmt.Errorf("SHA must be a non-empty string")
+	}
+	u := fmt.Sprintf("projects/%s/repository/commits/%s/diff", projectId, url.PathEscape(sha))
 
-	pipe, err := command.StdoutPipe()
-	err = command.Start()
+	req, err := cli.NewRequest(http.MethodGet, u, nil, options)
 	if err != nil {
 		log.Error(err)
+		return nil, err
 	}
 
-	reader := bufio.NewReader(pipe)
-
-	var result []string
-	for {
-		line, _, err := reader.ReadLine()
-		if err != nil {
-			log.Error(err)
-			break
-		}
-		s := string(line)
-		if strings.HasPrefix(s, "diff --git") {
-			continue
-		}
-		result = append(result, s)
+	c := make([]gogitlab.Diff, 0)
+	response, err := cli.Do(req, &c)
+	if err != nil {
+		log.Error(response)
+		log.Error(err)
+		return nil, err
+	}
+	if len(c) == 0 {
+		log.Error("commits info nil")
+		return nil, nil
 	}
 
-	return result
+	return c, err
+}
+
+func String(v string) *string {
+	p := new(string)
+	*p = v
+	return p
 }
 
 func writeHtml(files []string, ctx *gin.Context) {
@@ -605,9 +630,40 @@ func GetDiffFiles(ctx *gin.Context) {
 	context := internalhandler.NewContext(ctx)
 	defer func() { internalhandler.JSONResponse(ctx, context) }()
 
-	dir, branch := getDir(taskID, workflowName, context)
-	gitFetch(dir)
-	files := getDiffFiles(dir, "remotes/origin/"+branch, author)
+	client, repo := getClient(taskID, workflowName, context)
+
+	opt := &gogitlab.CompareOptions{
+		From: String("master"),
+		To:   String(repo.Branch),
+	}
+	id, _ := client.GetProjectID(repo.RepoOwner, repo.RepoName)
+	pid, _ := parseID(id)
+	compare, _, _ := client.Repositories.Compare(id, opt)
+	diffFiles := make([]string, 0)
+	for _, diff := range compare.Diffs {
+		if len(diff.Diff) > 0 {
+			diffFiles = append(diffFiles, diff.NewPath)
+		}
+	}
+
+	files := make([]FileInfo, 0)
+	hasFile := make([]string, 0)
+	for _, commit := range compare.Commits {
+		if strings.EqualFold(commit.CommitterEmail, author) {
+			diffs, _ := GetCommit(client, pid, commit.ID)
+			for _, diff := range diffs {
+				if slices.Contains(hasFile, diff.NewPath) || !slices.Contains(diffFiles, diff.NewPath) {
+					continue
+				}
+				fileKey := uuid.Generate().String()
+				hasFile = append(hasFile, diff.NewPath)
+				files = append(files, FileInfo{fileKey, diff.NewPath})
+				cache := GetCache()
+				cache.Write(fileKey, diff.NewPath)
+			}
+		}
+	}
+	log.Info(hasFile)
 
 	ctx.JSON(200, gin.H{"result": files})
 }
@@ -615,35 +671,6 @@ func GetDiffFiles(ctx *gin.Context) {
 type FileInfo struct {
 	Id       string `json:"id"`
 	FileName string `json:"fileName"`
-}
-
-func getDiffFiles(dir string, branch string, author string) []FileInfo {
-	files := make([]FileInfo, 0)
-	command := exec.Command("git", "diff", branch+"..remotes/origin/master", "--author="+author, "--name-status")
-	command.Dir = dir
-
-	pipe, err := command.StdoutPipe()
-	err = command.Start()
-	if err != nil {
-		log.Error(err)
-	}
-
-	reader := bufio.NewReader(pipe)
-
-	for {
-		line, _, err := reader.ReadLine()
-		if err != nil {
-			log.Error(err)
-			break
-		}
-		str := string(line)
-		fileKey := uuid.Generate().String()
-		files = append(files, FileInfo{fileKey, str[strings.Index(str, "/")+1:]})
-		cache := GetCache()
-		cache.Write(fileKey, str[strings.Index(str, "/")+1:])
-	}
-
-	return files
 }
 
 type MyCache struct {
@@ -737,13 +764,45 @@ func gitFetch(dir string) {
 func GetCommits(ctx *gin.Context) {
 	taskID := ctx.Param("taskID")
 	workflowName := ctx.Param("workflowName")
+	author := ctx.Param("author")
+	auth := configAuth()
+	for _, au := range auth {
+		if strings.EqualFold(author, au.Id) {
+			author = au.GitId
+		}
+	}
+
 	context := internalhandler.NewContext(ctx)
 	defer func() { internalhandler.JSONResponse(ctx, context) }()
 
-	gitDir, branch := getDir(taskID, workflowName, context)
-	files := getCommits(gitDir, "remotes/origin/"+branch)
+	client, repo := getClient(taskID, workflowName, context)
+	opts := &gogitlab.ListCommitsOptions{
+		RefName: &repo.Branch,
+		ListOptions: gogitlab.ListOptions{
+			PerPage: 1000,
+			Page:    1,
+		},
+	}
+	commits, _, _ := client.Commits.ListCommits(fmtRepo(repo.RepoNamespace, repo.RepoName), opts)
+	files := make([]BranchInfo, 0)
+	for _, commit := range commits {
+		if !strings.EqualFold(author, commit.CommitterEmail) {
+			continue
+		}
+		info := BranchInfo{commit.AuthorName, commit.Message, timeCnv(commit.CommittedDate), commit.ID}
+		files = append(files, info)
+	}
 
 	ctx.JSON(200, gin.H{"result": files})
+}
+
+func fmtRepo(repoNamespace string, repoName string) string {
+	return fmt.Sprintf("%s/%s", repoNamespace, repoName)
+}
+
+func timeCnv(ti *time.Time) string {
+	format := "2006-01-02 15:04:05"
+	return ti.Format(format)
 }
 
 type BranchInfo struct {
@@ -751,53 +810,4 @@ type BranchInfo struct {
 	Message string `json:"message"`
 	Time    string `json:"time"`
 	Hash    string `json:"hash"`
-}
-
-func getCommits(dir string, branch string) []BranchInfo {
-	var commits []BranchInfo
-
-	command := exec.Command("git", "log", branch, "--")
-	command.Dir = dir
-	pipe, err := command.StdoutPipe()
-	err = command.Start()
-	if err != nil {
-		log.Error(err)
-	}
-
-	reader := bufio.NewReader(pipe)
-
-	var br BranchInfo
-	for {
-		line, _, err := reader.ReadLine()
-		if err != nil {
-			log.Error(err)
-			break
-		}
-		s := string(line)
-		log.Info(s)
-		if strings.Contains(s, "commit") {
-			if len(br.Message) > 0 {
-				commits = append(commits, br)
-			}
-			br = BranchInfo{}
-			br.Hash = strings.TrimSpace(strings.Split(s, "commit")[1])
-		}
-		if strings.Contains(s, "Author") {
-			s2 := strings.Split(s, "<")[1]
-			br.Author = strings.TrimSpace(strings.Replace(s2, ">", "", -1))
-		}
-		if strings.Contains(s, "Date:") {
-			br.Time = strings.TrimSpace(strings.Split(s, "Date: ")[1])
-		}
-		if strings.Contains(s, "   ") {
-			space := strings.TrimSpace(strings.Split(s, "   ")[1])
-			if len(br.Message) > 0 {
-				br.Message = br.Message + ";" + space
-			} else {
-				br.Message = space
-			}
-		}
-	}
-
-	return commits
 }

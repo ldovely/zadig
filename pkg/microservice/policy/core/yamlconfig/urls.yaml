@@ -163,6 +163,9 @@ exemption_urls:
     - endpoint: v1/**
       methods:
         - GET
+    - endpoint: /**
+      methods:
+        - GET
     - endpoint: mobile/**
       methods:
         - GET
